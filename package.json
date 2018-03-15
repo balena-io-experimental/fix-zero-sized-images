@@ -1,0 +1,19 @@
+{
+  "name": "fix-zero-sized-images",
+  "version": "0.0.1",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bluebird": "^3.5.1",
+    "coffeescript": "^2.2.3",
+    "lodash": "^4.17.5",
+    "progress": "github:MrTraan/node-progress",
+    "request-promise": "^4.2.2",
+    "resin-sdk": "^9.0.0-beta9"
+  }
+}
