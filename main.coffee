@@ -70,8 +70,13 @@ getRegistryToken = (registryHost, imageRepo) ->
 		scope: "repository:#{imageRepo}:pull"
 	(await api('auth/v1/token', params)).token
 
+requestRetry = (...args) ->
+	request(...args)
+	.catch { code: 'ECONNRESET' }, (err) ->
+		requestRetry(...args)
+
 registry = (registryHost, endpoint, registryToken, headers, decodeJson, followRedirect, encoding) ->
-	request({
+	requestRetry({
 		uri: "https://#{registryHost}/#{endpoint}"
 		headers: _.merge({}, headers, Authorization: "Bearer #{registryToken}")
 		json: decodeJson
@@ -92,7 +97,7 @@ getLayerSize = (registryHost, token, imageRepo, blobSum) ->
 		# no redirect, like in the devenv
 	else if response.statusCode == 307
 		# redirect, like on production or staging
-		response = await request({ uri: response.headers.location, headers, resolveWithFullResponse: true, encoding: null })
+		response = await requestRetry({ uri: response.headers.location, headers, resolveWithFullResponse: true, encoding: null })
 	else
 		throw new Error('Unexpected status code from the registry: ' + response.statusCode)
 	response.body.readUIntLE(0, 4)
