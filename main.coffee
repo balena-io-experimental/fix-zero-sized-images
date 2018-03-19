@@ -6,6 +6,7 @@ resin = require('resin-sdk')
 settings = require('resin-settings-client')
 
 CONCURRENT_REQUESTS_TO_REGISTRY = 10
+PAGE_SIZE = '100'
 
 resin.setSharedOptions(
 	apiUrl: settings.get('apiUrl')
@@ -20,6 +21,7 @@ getZeroSizedImages = ->
 	images = await sdk.pine.get
 		resource: 'image'
 		options:
+			top: PAGE_SIZE
 			filter:
 				image_size: 0
 				image__is_part_of__release:
@@ -145,21 +147,23 @@ loginAsDisposer = (username) ->
 
 main = ->
 	images = await getZeroSizedImages()
-	imagesByUser = _.groupBy(images, 'user')
-	registry2Url = (await sdk.settings.getAll()).registry2Url
-	console.log('images to update:', JSON.stringify(imagesByUser, null, 4))
-	bar = new Progress('[:bar] :current/:total; :rate images/s; :percent; :etas left; current user: :user; image: :image', total: images.length, width: 30)
-	for user in _.keys(imagesByUser).sort()
-		await Promise.using loginAsDisposer(user), ->
-			for image in imagesByUser[user]
-				size = await getImageSize(image.repo, registry2Url, bar)
-				if size != 0
-					try
-						await updateSize(image.id, size)
-						bar.interrupt("#{user} #{image.id} #{image.repo} #{size}")
-					catch e
-						bar.interrupt("couldn't update size #{size} for image #{JSON.stringify(image)}: #{e}")
-				bar.tick({ user, image: image.repo })
+	while images.length
+		imagesByUser = _.groupBy(images, 'user')
+		registry2Url = (await sdk.settings.getAll()).registry2Url
+		console.log('images to update:', JSON.stringify(imagesByUser, null, 4))
+		bar = new Progress('[:bar] :current/:total; :rate images/s; :percent; :etas left; current user: :user; image: :image', total: images.length, width: 30)
+		for user in _.keys(imagesByUser).sort()
+			await Promise.using loginAsDisposer(user), ->
+				for image in imagesByUser[user]
+					size = await getImageSize(image.repo, registry2Url, bar)
+					if size != 0
+						try
+							await updateSize(image.id, size)
+							bar.interrupt("#{user} #{image.id} #{image.repo} #{size}")
+						catch e
+							bar.interrupt("couldn't update size #{size} for image #{JSON.stringify(image)}: #{e}")
+					bar.tick({ user, image: image.repo })
+		images = await getZeroSizedImages()
 	return
 
 wrapper = ->
