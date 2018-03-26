@@ -1,5 +1,6 @@
 Promise = require('bluebird')
 _ = require('lodash')
+process = require('process')
 Progress = require('progress')
 request = require('request-promise')
 resin = require('resin-sdk')
@@ -17,24 +18,35 @@ resin.setSharedOptions(
 
 sdk = resin.fromSharedOptions()
 
-getZeroSizedImages = ->
+getZeroSizedImages = (excludedUsernames) ->
+	filter =
+		image_size: 0
+		image__is_part_of__release:
+			$any:
+				$alias: 'iipor'
+				$expr:
+					iipor:
+						is_part_of__release:
+							$any:
+								$alias: 'ipor'
+								$expr:
+									ipor:
+										status: 'success'
+	if excludedUsernames.length
+		filter.image__is_part_of__release.$any.$expr.iipor.is_part_of__release.$any.$expr.ipor.is_created_by__user =
+			$any:
+				$alias: 'icbu'
+				$expr:
+					$not:
+						icbu:
+							username:
+								$in: excludedUsernames
+
 	images = await sdk.pine.get
 		resource: 'image'
 		options:
 			top: PAGE_SIZE
-			filter:
-				image_size: 0
-				image__is_part_of__release:
-					$any:
-						$alias: 'iipor'
-						$expr:
-							iipor:
-								is_part_of__release:
-									$any:
-										$alias: 'ipor'
-										$expr:
-											ipor:
-												status: 'success'
+			filter: filter
 			expand:
 				image__is_part_of__release:
 					$select: [ 'id' ]
@@ -146,7 +158,8 @@ loginAsDisposer = (username) ->
 
 
 main = ->
-	images = await getZeroSizedImages()
+	excludedUsernames = process.argv.slice(2)
+	images = await getZeroSizedImages(excludedUsernames)
 	while images.length
 		imagesByUser = _.groupBy(images, 'user')
 		registry2Url = (await sdk.settings.getAll()).registry2Url
@@ -163,7 +176,7 @@ main = ->
 						catch e
 							bar.interrupt("couldn't update size #{size} for image #{JSON.stringify(image)}: #{e}")
 					bar.tick({ user, image: image.repo })
-		images = await getZeroSizedImages()
+		images = await getZeroSizedImages(excludedUsernames)
 	return
 
 wrapper = ->
