@@ -1,6 +1,5 @@
 Promise = require('bluebird')
 _ = require('lodash')
-process = require('process')
 Progress = require('progress')
 request = require('request-promise')
 resin = require('resin-sdk')
@@ -17,8 +16,10 @@ resin.setSharedOptions(
 )
 
 sdk = resin.fromSharedOptions()
+excludedUsernames = []
+tokenCache = {}
 
-getZeroSizedImages = (excludedUsernames) ->
+getZeroSizedImages = ->
 	filter =
 		image_size: 0
 		image__is_part_of__release:
@@ -143,13 +144,16 @@ updateSize = (imageId, size) ->
 loginAsDisposer = (username) ->
 	# get the current user token
 	token = await sdk.auth.getToken()
-	# ask for a temporary other user token (30s)
-	#userTmpToken = (await sdk.request.send(baseUrl: sdk.pine.API_URL, url: '/login_', method:'PATCH', body: { username })).body
-	userTmpToken = (await api('/login_', { username }, 'PATCH'))
-	# set it as our current token
-	await sdk.auth.loginWithToken(userTmpToken)
-	# exchange the short lived token for a normal one
-	userToken = (await sdk.request.send(baseUrl: sdk.pine.API_URL, url: '/user/v1/refresh-token')).body
+	# get the user token from cache
+	userToken = tokenCache[username]
+	if not userToken?
+		# ask for a temporary other user token (30s)
+		userTmpToken = (await api('/login_', { username }, 'PATCH'))
+		# set it as our current token
+		await sdk.auth.loginWithToken(userTmpToken)
+		# exchange the short lived token for a normal one
+		userToken = (await sdk.request.send(baseUrl: sdk.pine.API_URL, url: '/user/v1/refresh-token')).body
+		tokenCache[username] = userToken
 	# set it as our current token
 	await sdk.auth.loginWithToken(userToken)
 	Promise.resolve().disposer ->
@@ -158,25 +162,30 @@ loginAsDisposer = (username) ->
 
 
 main = ->
-	excludedUsernames = process.argv.slice(2)
-	images = await getZeroSizedImages(excludedUsernames)
+	images = await getZeroSizedImages()
 	while images.length
 		imagesByUser = _.groupBy(images, 'user')
 		registry2Url = (await sdk.settings.getAll()).registry2Url
 		console.log('images to update:', JSON.stringify(imagesByUser, null, 4))
 		bar = new Progress('[:bar] :current/:total; :rate images/s; :percent; :etas left; current user: :user; image: :image', total: images.length, width: 30)
 		for user in _.keys(imagesByUser).sort()
-			await Promise.using loginAsDisposer(user), ->
-				for image in imagesByUser[user]
-					size = await getImageSize(image.repo, registry2Url, bar)
-					if size != 0
-						try
-							await updateSize(image.id, size)
-							bar.interrupt("#{user} #{image.id} #{image.repo} #{size}")
-						catch e
-							bar.interrupt("couldn't update size #{size} for image #{JSON.stringify(image)}: #{e}")
-					bar.tick({ user, image: image.repo })
-		images = await getZeroSizedImages(excludedUsernames)
+			try
+				await Promise.using loginAsDisposer(user), ->
+					for image in imagesByUser[user]
+						size = await getImageSize(image.repo, registry2Url, bar)
+						if size != 0
+							try
+								await updateSize(image.id, size)
+								bar.interrupt("#{user} #{image.id} #{image.repo} #{size}")
+							catch e
+								bar.interrupt("couldn't update size #{size} for image #{JSON.stringify(image)}: #{e}")
+						bar.tick({ user, image: image.repo })
+			catch err
+				if err.statusCode != 429
+					throw err
+				excludedUsernames.push(user)
+				bar.interrupt("Hit rate limit for #{user}, current blacklist: #{excludedUsernames.join(', ')}")
+		images = await getZeroSizedImages()
 	return
 
 wrapper = ->
